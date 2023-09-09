@@ -16,8 +16,8 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
-    return true;
+    if (system(cmd) == 0) return true;
+    return false;
 }
 
 /**
@@ -45,9 +45,9 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
+
+    char * cmd = command[0];
+    char ** arguments = (command);
 
 /*
  * TODO:
@@ -57,11 +57,21 @@ bool do_exec(int count, ...)
  *   (first argument to execv), and use the remaining arguments
  *   as second argument to the execv() command.
  *
-*/
+*/ 
+    int child_status;
+    pid_t child_pid;
+
+    child_pid = fork();
+
+    if (child_pid == -1) {perror("fork");va_end(args); return false;}
+    else if (child_pid == 0){
+        execv(cmd, arguments);
+        exit(-1);
+    }
+    if (waitpid (child_pid, &child_status, 0) == -1) {va_end(args); return false;}
 
     va_end(args);
-
-    return true;
+    return (WIFEXITED(child_status) && (child_status) == 0);
 }
 
 /**
@@ -80,10 +90,9 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    char * cmd = command[0];
+    char ** arguments = (command);
 
 /*
  * TODO
@@ -92,8 +101,21 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    int child_pid;
+    int child_status;
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    if (fd < 0) { perror("open"); va_end(args); return false; }
+    switch (child_pid = fork()) {
+    case -1: perror("fork"); va_end(args); return false;
+    case 0:
+        if (dup2(fd, 1) < 0) { perror("dup2"); va_end(args); return false; }
+        close(fd);
+        execv (cmd, arguments); perror("execv"); exit(-1);
+    default:
+        close(fd);
+    }
+    if (waitpid (child_pid, &child_status, 0) == -1) {va_end(args); return false;}
 
     va_end(args);
-
-    return true;
+    return (WIFEXITED(child_status) && (child_status) == 0);
 }
