@@ -162,13 +162,17 @@ int main(int argc, char *argv[]){
                 fseek(fp, 0, SEEK_SET);
                 for (int i = 0; i < nread; i++){
                     if (buf[i] == '\n') {
-                        // printf("got newline\n");
-                        while (1){
-                            char c = fgetc(fp);
-                            if (c == EOF){
+                        printf("got newline\n");
+                        char sendbuf[BUF_SIZE] = {0};
+                        int j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
+                        while(j>0) {
+                            printf("%d\n", j);
+                            if (send(new_fd, sendbuf, j, 0) == -1)
+                            {
+                                perror("send");
                                 break;
                             }
-                            send(new_fd, &c, 1, 0);
+                            j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
                         }
                     }
                 }
