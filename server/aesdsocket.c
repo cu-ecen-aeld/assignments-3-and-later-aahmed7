@@ -10,11 +10,18 @@
 #include <unistd.h>
 #include <syslog.h>
 #include <signal.h>
+#include <pthread.h>
 
 #define PORT "9000"
 #define BUF_SIZE 1024
 #define OUTFILE "/var/tmp/aesdsocketdata"
 #define NUM_CLIENTS 10
+
+struct thread_data{
+    int client_fd;
+    socklen_t peer_addrlen;
+    struct sockaddr_storage peer_addr;
+};
 
 volatile sig_atomic_t done = 0;
 
@@ -37,6 +44,57 @@ void *get_in_addr(struct sockaddr *sa) {
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
+void *conn_thread(void* thread_param) {
+    ssize_t nread;
+    char buf[BUF_SIZE] = {0};
+    char s[INET6_ADDRSTRLEN];
+    struct thread_data *tdata = (struct thread_data *)thread_param;
+
+    // get peer address.
+    inet_ntop(tdata->peer_addr.ss_family, get_in_addr((struct sockaddr*)&tdata->peer_addr), s, sizeof(s));
+    // printf("Accepted connection from %s\n", s);
+    syslog(LOG_USER, "Accepted connection from %s\n", s);
+
+    FILE *fp = fopen(OUTFILE, "a+b");
+    if (fp == NULL){
+        perror("fopen");
+        exit(-1);
+    }
+    do{
+        nread = recv(tdata->client_fd, &buf, BUF_SIZE, 0);
+        if (nread == -1) {
+            close (tdata->client_fd);
+            perror("recv");
+            exit(-1);
+        }else{
+            fwrite(&buf, 1, nread, fp);
+            fseek(fp, 0, SEEK_SET);
+            for (int i = 0; i < nread; i++){
+                if (buf[i] == '\n') {
+                    printf("got newline\n");
+                    char sendbuf[BUF_SIZE] = {0};
+                    int j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
+                    while(j>0) {
+                        printf("%d\n", j);
+                        if (send(tdata->client_fd, sendbuf, j, 0) == -1)
+                        {
+                            perror("send");
+                            break;
+                        }
+                        j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
+                    }
+                }
+            }
+        }
+    }while(nread != 0);
+    fclose(fp);
+
+    close(tdata->client_fd);
+    syslog(LOG_USER, "Closed connection from %s\n", s);
+
+    return thread_param;
+}
+
 int main(int argc, char *argv[]){
     if (argc > 1){
         // if we have some extra arguments.
@@ -52,12 +110,8 @@ int main(int argc, char *argv[]){
             fprintf(stderr,"Some invalid arguments were passed and ignored\n");
         }
     }
-    int sfd, new_fd, yes = 1;
+    int sfd, yes = 1;
     struct addrinfo hints, *result, *rp;
-    ssize_t nread;
-    socklen_t peer_addrlen;
-    struct sockaddr_storage peer_addr;
-    char s[INET6_ADDRSTRLEN];
     int rv;
 
     struct sigaction sa_sigterm;
@@ -130,59 +184,30 @@ int main(int argc, char *argv[]){
     // printf("server: waiting for connections...\n");
     syslog(LOG_USER, "waiting for connections...\n");
     while(done == 0){
-        peer_addrlen = sizeof(peer_addr);
-        char buf[BUF_SIZE] = {0};
+        pthread_t thread = {0};
+        struct thread_data *tdata;
+        int s = 0;
+        tdata = calloc(1, sizeof(struct thread_data));
+        if (tdata == NULL){
+            perror("calloc");
+            continue;
+        }
+        tdata->peer_addrlen = sizeof(tdata->peer_addr);
 
         // Wait for a connection.
-        new_fd = accept(sfd, (struct sockaddr*)&peer_addr, &peer_addrlen);
-        if (new_fd == -1){
+        tdata->client_fd = accept(sfd, (struct sockaddr*)&tdata->peer_addr, &tdata->peer_addrlen);
+        if (tdata->client_fd == -1){
             // perror("accept");
             syslog(LOG_ERR, "failed to accept connection socket\n");
             continue;
         }
-
-        // get peer address.
-        inet_ntop(peer_addr.ss_family, get_in_addr((struct sockaddr*)&peer_addr), s, sizeof(s));
-        // printf("Accepted connection from %s\n", s);
-        syslog(LOG_USER, "Accepted connection from %s\n", s);
-
-        FILE *fp = fopen(OUTFILE, "a+b");
-        if (fp == NULL){
-            perror("fopen");
-            exit(-1);
+        s = pthread_create(&thread, NULL, conn_thread, tdata);
+        if (s != 0){
+            printf("Failed to create thread\n");
+            perror("pthread_create");
+            free(tdata);
         }
-        do{
-            nread = recv(new_fd, &buf, BUF_SIZE, 0);
-            if (nread == -1) {
-                close(sfd);
-                close (new_fd);
-                perror("recv");
-                exit(-1);
-            }else{
-                fwrite(&buf, 1, nread, fp);
-                fseek(fp, 0, SEEK_SET);
-                for (int i = 0; i < nread; i++){
-                    if (buf[i] == '\n') {
-                        printf("got newline\n");
-                        char sendbuf[BUF_SIZE] = {0};
-                        int j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
-                        while(j>0) {
-                            printf("%d\n", j);
-                            if (send(new_fd, sendbuf, j, 0) == -1)
-                            {
-                                perror("send");
-                                break;
-                            }
-                            j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
-                        }
-                    }
-                }
-            }
-        }while(nread != 0);
-        fclose(fp);
 
-        close(new_fd);
-        syslog(LOG_USER, "Closed connection from %s\n", s);
     }
 
     // Cleanup.
