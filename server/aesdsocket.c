@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/queue.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -22,6 +23,13 @@ struct thread_data{
     int client_fd;
     socklen_t peer_addrlen;
     struct sockaddr_storage peer_addr;
+};
+
+struct node
+{
+    pthread_t thread;
+    // This macro does the magic to point to other nodes
+    TAILQ_ENTRY(node) nodes;
 };
 
 volatile sig_atomic_t done = 0;
@@ -192,6 +200,11 @@ int main(int argc, char *argv[]){
         exit(-1);
     }
 
+    TAILQ_HEAD(head_s, node) head;
+    TAILQ_INIT(&head);
+
+    struct node * e = NULL;
+
     // printf("server: waiting for connections...\n");
     syslog(LOG_USER, "waiting for connections...\n");
     while(done == 0){
@@ -219,6 +232,25 @@ int main(int argc, char *argv[]){
             free(tdata);
         }
 
+        e = malloc(sizeof(struct node));
+        if (e == NULL)
+        {
+            printf("Failed to create list node\n");
+            perror("malloc failed");
+            break;
+        }
+        e->thread = thread;
+        TAILQ_INSERT_TAIL(&head, e, nodes);
+        e=NULL;
+    }
+
+    while (!TAILQ_EMPTY(&head))
+    {
+        e = TAILQ_FIRST(&head);
+        pthread_join(e->thread, NULL);
+        TAILQ_REMOVE(&head, e, nodes);
+        free(e);
+        e = NULL;
     }
 
     // Cleanup.
