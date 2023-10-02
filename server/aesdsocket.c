@@ -53,7 +53,40 @@ void *get_in_addr(struct sockaddr *sa) {
     return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-void *conn_thread(void* thread_param) {
+void *ts_thread_func(void* thread_param){
+    while (done==0) {
+        char outstr[200];
+        time_t t;
+        struct tm *tmp;
+
+        t = time(NULL);
+        tmp = localtime(&t);
+        if (tmp == NULL) {
+            perror("localtime");
+            break;
+        }
+
+        if (strftime(outstr, sizeof(outstr), "timestamp:%a, %d %b %Y %T %z", tmp) == 0) {
+            fprintf(stderr, "strftime returned 0");
+            break;
+        }
+        printf("Result string is \"%s\"\n", outstr);
+
+        pthread_mutex_lock(&mutex);
+        FILE *fp = fopen(OUTFILE, "a");
+        if (fp != NULL){
+            // fwrite(&outstr, 1, sizeof(outstr), fp);
+            fprintf(fp, "%s\n", outstr);
+            fclose(fp);
+        }
+        pthread_mutex_unlock(&mutex);
+
+        sleep(10);
+    }
+    return thread_param;
+}
+
+void *conn_thread_func(void* thread_param) {
     ssize_t nread;
     char buf[BUF_SIZE] = {0};
     char s[INET6_ADDRSTRLEN];
@@ -132,6 +165,8 @@ int main(int argc, char *argv[]){
     int sfd, yes = 1;
     struct addrinfo hints, *result, *rp;
     int rv;
+    struct node * e = NULL;
+    pthread_t ts_thread = {0};
 
     struct sigaction sa_sigterm;
     memset(&sa_sigterm, 0, sizeof(sa_sigterm));
@@ -203,7 +238,11 @@ int main(int argc, char *argv[]){
     TAILQ_HEAD(head_s, node) head;
     TAILQ_INIT(&head);
 
-    struct node * e = NULL;
+    if(pthread_create(&ts_thread, NULL, ts_thread_func, NULL) != 0){
+        perror("ts_thread create");
+        done = 1;
+        goto cleanup;
+    }
 
     // printf("server: waiting for connections...\n");
     syslog(LOG_USER, "waiting for connections...\n");
@@ -225,7 +264,7 @@ int main(int argc, char *argv[]){
             syslog(LOG_ERR, "failed to accept connection socket\n");
             continue;
         }
-        s = pthread_create(&thread, NULL, conn_thread, tdata);
+        s = pthread_create(&thread, NULL, conn_thread_func, tdata);
         if (s != 0){
             printf("Failed to create thread\n");
             perror("pthread_create");
@@ -254,6 +293,7 @@ int main(int argc, char *argv[]){
     }
 
     // Cleanup.
+cleanup:
     remove(OUTFILE);
     pthread_mutex_destroy(&mutex);
     close(sfd);
