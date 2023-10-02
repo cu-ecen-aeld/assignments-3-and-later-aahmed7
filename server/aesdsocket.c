@@ -16,6 +16,7 @@
 #define BUF_SIZE 1024
 #define OUTFILE "/var/tmp/aesdsocketdata"
 #define NUM_CLIENTS 10
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct thread_data{
     int client_fd;
@@ -55,6 +56,12 @@ void *conn_thread(void* thread_param) {
     // printf("Accepted connection from %s\n", s);
     syslog(LOG_USER, "Accepted connection from %s\n", s);
 
+    if (pthread_mutex_lock(&mutex) != 0){
+        perror("pthread_mutex_lock");
+        close(tdata->client_fd);
+        syslog(LOG_USER, "Closed connection from %s\n", s);
+        return thread_param;
+    }
     FILE *fp = fopen(OUTFILE, "a+b");
     if (fp == NULL){
         perror("fopen");
@@ -88,6 +95,10 @@ void *conn_thread(void* thread_param) {
         }
     }while(nread != 0);
     fclose(fp);
+
+    if (pthread_mutex_unlock(&mutex) != 0){
+        perror("pthread_mutex_unlock");
+    }
 
     close(tdata->client_fd);
     syslog(LOG_USER, "Closed connection from %s\n", s);
@@ -180,7 +191,7 @@ int main(int argc, char *argv[]){
         syslog(LOG_ERR, "failed to open socket\n");
         exit(-1);
     }
-    
+
     // printf("server: waiting for connections...\n");
     syslog(LOG_USER, "waiting for connections...\n");
     while(done == 0){
@@ -212,6 +223,7 @@ int main(int argc, char *argv[]){
 
     // Cleanup.
     remove(OUTFILE);
+    pthread_mutex_destroy(&mutex);
     close(sfd);
 
     return 0;
