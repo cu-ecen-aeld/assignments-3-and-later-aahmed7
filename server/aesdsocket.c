@@ -14,6 +14,7 @@
 #define PORT "9000"
 #define BUF_SIZE 1024
 #define OUTFILE "/var/tmp/aesdsocketdata"
+#define NUM_CLIENTS 10
 
 volatile sig_atomic_t done = 0;
 
@@ -120,8 +121,8 @@ int main(int argc, char *argv[]){
     }
 
     // Start listening for a connection.
-    if (listen(sfd, 10) == -1){
-        // perror("listen");
+    if (listen(sfd, NUM_CLIENTS) == -1){
+        perror("listen");
         syslog(LOG_ERR, "failed to open socket\n");
         exit(-1);
     }
