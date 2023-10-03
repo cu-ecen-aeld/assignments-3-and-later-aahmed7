@@ -1,4 +1,5 @@
-CC=$(CROSS_COMPILE)gcc
+# Yocto passes CC as full path to cross-compiler.
+# CC=$(CROSS_COMPILE)gcc 
 CFLAGS=-g -Wall
 LIBDEPS=-lpthread
 
