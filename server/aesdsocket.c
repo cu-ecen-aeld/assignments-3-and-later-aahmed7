@@ -15,8 +15,16 @@
 
 #define PORT "9000"
 #define BUF_SIZE 1024
-#define OUTFILE "/var/tmp/aesdsocketdata"
 #define NUM_CLIENTS 10
+
+#define USE_AESD_CHAR_DEVICE 1
+
+#if (USE_AESD_CHAR_DEVICE)
+    #define OUTFILE "/dev/aesdchar"
+#else
+    #define OUTFILE "/var/tmp/aesdsocketdata"
+#endif
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct thread_data{
@@ -238,11 +246,13 @@ int main(int argc, char *argv[]){
     TAILQ_HEAD(head_s, node) head;
     TAILQ_INIT(&head);
 
+#if !(USE_AESD_CHAR_DEVICE)
     if(pthread_create(&ts_thread, NULL, ts_thread_func, NULL) != 0){
         perror("ts_thread create");
         done = 1;
         goto cleanup;
     }
+#endif
 
     // printf("server: waiting for connections...\n");
     syslog(LOG_USER, "waiting for connections...\n");
@@ -294,7 +304,9 @@ int main(int argc, char *argv[]){
 
     // Cleanup.
 cleanup:
+#if !(USE_AESD_CHAR_DEVICE)
     remove(OUTFILE);
+#endif
     pthread_mutex_destroy(&mutex);
     close(sfd);
 
