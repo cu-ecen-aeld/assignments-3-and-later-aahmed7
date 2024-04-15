@@ -26,7 +26,7 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Arslan Ahmad"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Arslan Ahmad");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -47,8 +47,7 @@ int aesd_open(struct inode *inode, struct file *filp)
 int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("release");
-    /* As per ldd3 ch03, "The release Method", there is no hardware associated
-     that has to shutdown, so no code required here. */
+
     return 0;
 }
 
@@ -201,7 +200,10 @@ void aesd_cleanup_module(void)
     if (temp_buffer) kfree(temp_buffer);
 
     AESD_CIRCULAR_BUFFER_FOREACH(entry, &aesd_device.cb, index){
-        if (entry->buffptr) kfree (entry->buffptr);
+        if (entry->buffptr) {
+            kfree (entry->buffptr);
+            entry->buffptr = NULL;
+        }
     }
 
     mutex_destroy(&aesd_device.lock);

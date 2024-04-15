@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <syslog.h>
 #include <signal.h>
 #include <pthread.h>
@@ -95,14 +96,13 @@ void *ts_thread_func(void* thread_param){
 }
 
 void *conn_thread_func(void* thread_param) {
-    ssize_t nread;
+    ssize_t nread = 0;
     char buf[BUF_SIZE] = {0};
-    char s[INET6_ADDRSTRLEN];
+    char s[INET6_ADDRSTRLEN] = {0};
     struct thread_data *tdata = (struct thread_data *)thread_param;
 
     // get peer address.
     inet_ntop(tdata->peer_addr.ss_family, get_in_addr((struct sockaddr*)&tdata->peer_addr), s, sizeof(s));
-    // printf("Accepted connection from %s\n", s);
     syslog(LOG_USER, "Accepted connection from %s\n", s);
 
     if (pthread_mutex_lock(&mutex) != 0){
@@ -111,39 +111,45 @@ void *conn_thread_func(void* thread_param) {
         syslog(LOG_USER, "Closed connection from %s\n", s);
         return thread_param;
     }
-    FILE *fp = fopen(OUTFILE, "a+b");
-    if (fp == NULL){
+
+    int fd1 = open(OUTFILE, O_WRONLY | O_APPEND | O_CREAT, 0666);;
+    if (fd1 == -1){
+        perror("open");
+        syslog(LOG_ERR, "open1 failed");
+        exit(-1);
+    }
+
+    while((nread = recv(tdata->client_fd, &buf, BUF_SIZE, 0)) > 0){
+        ssize_t nwrite = write(fd1, &buf, nread);
+        if(nwrite == -1) {
+            perror("write");
+            syslog(LOG_ERR, "write failed");
+            close(fd1);
+            return thread_param;
+        }
+        for (int i = 0; i < nread; i++){
+            if (buf[i] == '\n') {
+                syslog(LOG_USER,"got newline\n");
+                break;
+            }
+        }
+    };
+    close(fd1);
+
+    int fd2 = open(OUTFILE, O_RDONLY);
+    if (fd2 == -1){
         perror("fopen");
         exit(-1);
     }
-    do{
-        nread = recv(tdata->client_fd, &buf, BUF_SIZE, 0);
-        if (nread == -1) {
-            close (tdata->client_fd);
-            perror("recv");
-            exit(-1);
-        }else{
-            fwrite(&buf, 1, nread, fp);
-            fseek(fp, 0, SEEK_SET);
-            for (int i = 0; i < nread; i++){
-                if (buf[i] == '\n') {
-                    printf("got newline\n");
-                    char sendbuf[BUF_SIZE] = {0};
-                    int j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
-                    while(j>0) {
-                        printf("%d\n", j);
-                        if (send(tdata->client_fd, sendbuf, j, 0) == -1)
-                        {
-                            perror("send");
-                            break;
-                        }
-                        j = fread(sendbuf, sizeof(char), BUF_SIZE, fp);
-                    }
-                }
-            }
+    while((nread = read(fd2, buf, BUF_SIZE)) > 0) {
+        ssize_t nwrite = 0;
+        if ((nwrite = send(tdata->client_fd, buf, nread, 0)) == -1)
+        {
+            perror("send");
+            break;
         }
-    }while(nread != 0);
-    fclose(fp);
+    }
+    close(fd2);
 
     if (pthread_mutex_unlock(&mutex) != 0){
         perror("pthread_mutex_unlock");
@@ -254,7 +260,6 @@ int main(int argc, char *argv[]){
     }
 #endif
 
-    // printf("server: waiting for connections...\n");
     syslog(LOG_USER, "waiting for connections...\n");
     while(done == 0){
         pthread_t thread = {0};
@@ -277,6 +282,7 @@ int main(int argc, char *argv[]){
         s = pthread_create(&thread, NULL, conn_thread_func, tdata);
         if (s != 0){
             printf("Failed to create thread\n");
+            syslog(LOG_USER,"Failed to create thread\n");
             perror("pthread_create");
             free(tdata);
         }
@@ -285,6 +291,7 @@ int main(int argc, char *argv[]){
         if (e == NULL)
         {
             printf("Failed to create list node\n");
+            syslog(LOG_USER,"Failed to create list node\n");
             perror("malloc failed");
             break;
         }
