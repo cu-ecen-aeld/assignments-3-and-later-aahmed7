@@ -13,6 +13,7 @@
 #include <syslog.h>
 #include <signal.h>
 #include <pthread.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define PORT "9000"
 #define BUF_SIZE 1024
@@ -25,6 +26,8 @@
 #else
     #define OUTFILE "/var/tmp/aesdsocketdata"
 #endif
+
+#define AESDCHAR_IOCSEEKTO_CMD "AESDCHAR_IOCSEEKTO:"
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -100,6 +103,7 @@ void *conn_thread_func(void* thread_param) {
     char buf[BUF_SIZE] = {0};
     char s[INET6_ADDRSTRLEN] = {0};
     struct thread_data *tdata = (struct thread_data *)thread_param;
+    struct aesd_seekto seekto = {0};
 
     // get peer address.
     inet_ntop(tdata->peer_addr.ss_family, get_in_addr((struct sockaddr*)&tdata->peer_addr), s, sizeof(s));
@@ -118,14 +122,27 @@ void *conn_thread_func(void* thread_param) {
         syslog(LOG_ERR, "open1 failed");
         exit(-1);
     }
+    int fd2 = open(OUTFILE, O_RDONLY);
+    if (fd2 == -1){
+        perror("fopen");
+        exit(-1);
+    }
 
-    while((nread = recv(tdata->client_fd, &buf, BUF_SIZE, 0)) > 0){
-        ssize_t nwrite = write(fd1, &buf, nread);
-        if(nwrite == -1) {
-            perror("write");
-            syslog(LOG_ERR, "write failed");
-            close(fd1);
-            return thread_param;
+    while((nread = recv(tdata->client_fd, &buf, BUF_SIZE, 0)) > 0) {
+        syslog(LOG_USER, "socket received: %s", buf);
+        int ret = sscanf(buf, "AESDCHAR_IOCSEEKTO:%u,%u\n", &seekto.write_cmd, &seekto.write_cmd_offset);
+        if (ret == 2){
+            syslog(LOG_USER, "token 1: %d, token 2: %d\n", seekto.write_cmd, seekto.write_cmd_offset);
+            if (ioctl(fd2, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
+                syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO failed: %s", strerror(errno));
+            }
+        } else {
+            if(write(fd1, &buf, nread) == -1) {
+                perror("write");
+                syslog(LOG_ERR, "write failed");
+                close(fd1);
+                return thread_param;
+            }
         }
         for (int i = 0; i < nread; i++){
             if (buf[i] == '\n') {
@@ -133,14 +150,9 @@ void *conn_thread_func(void* thread_param) {
                 break;
             }
         }
-    };
+    }
     close(fd1);
 
-    int fd2 = open(OUTFILE, O_RDONLY);
-    if (fd2 == -1){
-        perror("fopen");
-        exit(-1);
-    }
     while((nread = read(fd2, buf, BUF_SIZE)) > 0) {
         ssize_t nwrite = 0;
         if ((nwrite = send(tdata->client_fd, buf, nread, 0)) == -1)
